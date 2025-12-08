@@ -30,7 +30,7 @@ NOTION_DATABASE_ID=your_database_id
 GOOGLE_SHEETS_ENABLED=true
 GOOGLE_SHEETS_CREDENTIALS_FILE=credentials.json
 GOOGLE_SHEETS_SPREADSHEET_ID=your_spreadsheet_id
-```
+
 
 ### 3. Notion設定
 
