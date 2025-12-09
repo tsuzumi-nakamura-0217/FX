@@ -123,7 +123,6 @@ FX/
 ├── reports/                 # MT5レポートファイル保存先
 ├── logs/                    # ログファイル
 ├── .env                     # 環境変数（要作成）
-├── .env.example            # 環境変数のサンプル
 ├── requirements.txt         # 依存パッケージ
 └── README.md
 

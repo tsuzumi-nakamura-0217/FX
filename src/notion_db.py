@@ -16,6 +16,22 @@ class NotionClient:
         self.client = Client(auth=api_key)
         self.database_id = database_id
     
+    @staticmethod
+    def get_page_url(page_id: str) -> str:
+        """
+        ページIDからNotionページURLを生成
+        
+        Args:
+            page_id: NotionページID（ハイフンあり・なし両対応）
+        
+        Returns:
+            NotionページURL
+        """
+        # ハイフンを削除して32文字のIDにする
+        clean_id = page_id.replace('-', '')
+        # NotionのページURL形式に変換
+        return f"https://www.notion.so/{clean_id}"
+    
     def create_trade_record(self, trade: Dict) -> Optional[str]:
         """
         取引レコードをNotionに作成
@@ -124,7 +140,47 @@ class NotionClient:
             print(f"既存データの取得エラー: {e}")
             return []
     
-    def sync_trades(self, trades: List[Dict]) -> Dict[str, int]:
+    def get_existing_tickets_with_urls(self) -> Dict[str, str]:
+        """
+        データベースに既に存在する取引番号とページURLを取得
+        
+        Returns:
+            取引番号とNotionページURLの辞書
+        """
+        try:
+            ticket_to_url = {}
+            has_more = True
+            start_cursor = None
+            
+            while has_more:
+                query_params = {
+                    "database_id": self.database_id,
+                    "page_size": 100
+                }
+                
+                if start_cursor:
+                    query_params["start_cursor"] = start_cursor
+                
+                response = self.client.databases.query(**query_params)
+                
+                for page in response['results']:
+                    title_property = page['properties'].get('取引番号', {})
+                    if 'title' in title_property and title_property['title']:
+                        ticket = title_property['title'][0]['text']['content']
+                        page_id = page['id']
+                        ticket_to_url[ticket] = self.get_page_url(page_id)
+                
+                has_more = response['has_more']
+                start_cursor = response.get('next_cursor')
+            
+            print(f"Notionに既に {len(ticket_to_url)} 件の取引が記録されています")
+            return ticket_to_url
+            
+        except Exception as e:
+            print(f"既存データの取得エラー: {e}")
+            return {}
+    
+    def sync_trades(self, trades: List[Dict]) -> tuple[Dict[str, int], Dict[str, str]]:
         """
         取引データをNotionに同期（重複チェック付き）
         
@@ -132,10 +188,11 @@ class NotionClient:
             trades: 取引データのリスト
         
         Returns:
-            同期結果の統計
+            (統計情報, 取引番号とNotionページURLの辞書)
         """
-        # 既存の取引番号を取得
-        existing_tickets = set(self.get_existing_tickets())
+        # 既存の取引番号とURLを取得
+        ticket_to_url = self.get_existing_tickets_with_urls()
+        existing_tickets = set(ticket_to_url.keys())
         
         stats = {
             'total': len(trades),
@@ -147,14 +204,17 @@ class NotionClient:
         for trade in trades:
             ticket = str(trade['ticket'])
             
-            # 既に存在する場合はスキップ
+            # 既に存在する場合はスキップ（URLは既に取得済み）
             if ticket in existing_tickets:
                 stats['skipped'] += 1
                 continue
             
             # 新規レコードを作成
-            if self.create_trade_record(trade):
+            page_id = self.create_trade_record(trade)
+            if page_id:
                 stats['new'] += 1
+                # ページURLを生成して辞書に追加
+                ticket_to_url[ticket] = self.get_page_url(page_id)
             else:
                 stats['failed'] += 1
         
@@ -164,7 +224,7 @@ class NotionClient:
         print(f"  - スキップ: {stats['skipped']}件")
         print(f"  - 失敗: {stats['failed']}件")
         
-        return stats
+        return stats, ticket_to_url
 
 
 # テスト実行用

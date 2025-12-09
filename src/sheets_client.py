@@ -65,12 +65,13 @@ class SheetsClient:
             # エラーの場合もヘッダーを設定
             self.sheet.update('A1', [headers])
     
-    def sync_trades(self, trades: List[Dict]) -> Dict[str, int]:
+    def sync_trades(self, trades: List[Dict], ticket_to_url: Optional[Dict[str, str]] = None) -> Dict[str, int]:
         """
         取引データをスプレッドシートに同期
         
         Args:
             trades: 取引データのリスト
+            ticket_to_url: 取引番号とNotionページURLのマッピング（オプション）
         
         Returns:
             統計情報 (new: 新規追加数, existing: 既存数)
@@ -82,6 +83,10 @@ class SheetsClient:
         
         print(f"スプレッドシートの既存取引: {len(existing_tickets)}件")
         
+        # ticket_to_urlがnoneの場合は空の辞書を使用
+        if ticket_to_url is None:
+            ticket_to_url = {}
+        
         # 各取引を処理
         for trade in trades:
             ticket = str(trade['ticket'])
@@ -90,7 +95,9 @@ class SheetsClient:
                 print(f"  ⊘ 取引 {ticket} は既に存在します（スキップ）")
                 stats['existing'] += 1
             else:
-                if self.add_trade_row(trade):
+                # Notion URLがあれば渡す
+                notion_url = ticket_to_url.get(ticket)
+                if self.add_trade_row(trade, notion_url):
                     stats['new'] += 1
         
         return stats
@@ -110,12 +117,13 @@ class SheetsClient:
             print(f"既存取引の取得エラー: {e}")
             return []
     
-    def add_trade_row(self, trade: Dict) -> bool:
+    def add_trade_row(self, trade: Dict, notion_url: Optional[str] = None) -> bool:
         """
         取引データを新しい行として追加
         
         Args:
             trade: 取引データ
+            notion_url: NotionページのURL（オプション）
         
         Returns:
             成功時True、失敗時False
@@ -130,9 +138,17 @@ class SheetsClient:
             date_str = trade['open_time'].strftime('%Y-%m-%d')
             sync_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             
+            ticket_str = str(trade['ticket'])
+            
+            # Notionリンクがある場合はHYPERLINK関数を使用
+            if notion_url:
+                ticket_cell_value = f'=HYPERLINK("{notion_url}", "{ticket_str}")'
+            else:
+                ticket_cell_value = ticket_str
+            
             # 行データを作成
             row_data = [
-                str(trade['ticket']),           # 取引番号
+                ticket_cell_value,              # 取引番号（リンク付き）
                 trade['symbol'],                # 通貨ペア
                 trade['type'],                  # タイプ
                 trade['volume'],                # ロット
@@ -148,11 +164,17 @@ class SheetsClient:
                 sync_time                       # 同期日時
             ]
             
-            # 次の空行を見つけて追加
+            # 次の空行の行番号を取得（A列基準）
             next_row = len(self.sheet.col_values(1)) + 1
-            self.sheet.append_row(row_data, value_input_option='USER_ENTERED')
+            # A列から明示的に範囲を指定して追加
+            range_name = f'A{next_row}:N{next_row}'
+            self.sheet.update(range_name, [row_data], value_input_option='USER_ENTERED')
             
-            print(f"✓ 取引 {trade['ticket']} をスプレッドシートに記録しました")
+            if notion_url:
+                print(f"✓ 取引 {ticket_str} をスプレッドシートに記録しました（Notionリンク付き）")
+            else:
+                print(f"✓ 取引 {ticket_str} をスプレッドシートに記録しました")
+            
             return True
             
         except Exception as e:

@@ -89,7 +89,7 @@ def main(report_file: str = None):
             database_id=Config.NOTION_DATABASE_ID
         )
         
-        stats = notion.sync_trades(trades)
+        stats, ticket_to_url = notion.sync_trades(trades)
         
         # 結果表示
         print("\n" + "=" * 60)
@@ -114,12 +114,15 @@ def main(report_file: str = None):
                         spreadsheet_id=Config.GOOGLE_SHEETS_SPREADSHEET_ID
                     )
                     
-                    sheets_stats = sheets.sync_trades(trades)
+                    # NotionページURLのマッピングを渡す
+                    sheets_stats = sheets.sync_trades(trades, ticket_to_url)
                     
                     print("\n" + "=" * 60)
                     print("【Google Sheets同期結果】")
                     if sheets_stats['new'] > 0:
                         print(f"✓ {sheets_stats['new']}件の新しい取引を記録しました")
+                        if ticket_to_url:
+                            print(f"  ({len(ticket_to_url)}件にNotionリンクを設定)")
                     else:
                         print("新しい取引はありませんでした")
                     print("=" * 60)
