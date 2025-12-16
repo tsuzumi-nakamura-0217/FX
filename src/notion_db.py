@@ -11,7 +11,7 @@ class NotionClient:
         """
         Args:
             api_key: Notion APIキー
-            database_id: 書き込み先のデータベースID
+            database_id: 取引データベースID
         """
         self.client = Client(auth=api_key)
         self.database_id = database_id

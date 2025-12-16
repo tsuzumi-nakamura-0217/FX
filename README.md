@@ -1,38 +1,47 @@
-# XMTrading MT5 → Notion 自動同期システム
+# FXトレード記録・資産管理アプリケーション
 
 ## 概要
-XMTrading（MT5）の取引記録を自動でNotionに同期するPythonアプリケーション
+MT5の取引記録を分析・可視化するStreamlitベースのWebアプリケーション
 
-**macOS対応**: MT5のレポートファイル（HTML/CSV）を読み込んで同期します
+**macOS対応**: MT5のレポートファイル（HTML/CSV）を読み込んで分析します
 
-## 機能
-- MT5レポートファイル（HTML/CSV）から取引履歴を解析
-- Notionデータベースへの自動記録
-- 重複チェック（既存の取引はスキップ）
-- 定期実行のサポート
+## 主な機能
+- 📊 トレード履歴の可視化とダッシュボード表示
+- 📈 損益チャートと統計分析
+- 💼 資産推移のトラッキング
+- 📝 トレード戦略の管理とテンプレート化
+- 🔄 Notionデータベースとの連携
+- 📄 Google Sheetsへのエクスポート（オプション）
+- 📑 MT5レポートファイル（HTML/CSV）の自動解析
 
 ## セットアップ
 
 ### 1. 必要なパッケージのインストール
 ```bash
+# 仮想環境の作成（推奨）
+python -m venv .venv
+source .venv/bin/activate  # macOS/Linux
 
-
+# 依存パッケージのインストール
+pip install -r requirements.txt
 ```
 
 ### 2. 環境変数の設定
 `.env`ファイルを作成し、以下の情報を設定：
 
-# Notion API情報
+```bash
+# Notion API情報（オプション）
 NOTION_API_KEY=your_notion_integration_token
 NOTION_DATABASE_ID=your_database_id
 
 # Google Sheets連携（オプション）
-GOOGLE_SHEETS_ENABLED=true
+GOOGLE_SHEETS_ENABLED=false
 GOOGLE_SHEETS_CREDENTIALS_FILE=credentials.json
 GOOGLE_SHEETS_SPREADSHEET_ID=your_spreadsheet_id
+```
 
 
-### 3. Notion設定
+### 3. Notion設定（オプション）
 
 #### 3.1 Notionインテグレーションの作成
 1. https://www.notion.so/my-integrations にアクセス
@@ -48,7 +57,6 @@ GOOGLE_SHEETS_SPREADSHEET_ID=your_spreadsheet_id
 - **開始時刻** (日付)
 - **終了時刻** (日付)
 - **損益** (数値)
-
 
 #### 3.3 データベースIDの取得
 1. Notionでデータベースを開く
@@ -98,47 +106,92 @@ GOOGLE_SHEETS_SPREADSHEET_ID=your_spreadsheet_id
 
 ## 使い方
 
-### 手動実行
-```bash
-python src/main.py
-```
 ## 使い方
+
+### アプリケーションの起動
+```bash
+# 仮想環境をアクティベート（未アクティベートの場合）
+source .venv/bin/activate
+
+# Streamlitアプリの起動
+streamlit run app.py
+```
+
+ブラウザが自動的に開き、`http://localhost:8501`でアプリが表示されます。
 
 ### MT5からレポートをエクスポート
 
 1. **MT5アプリを開く**
 2. **「ターミナル」→「口座履歴」タブ** を選択
 3. 右クリック→**「期間のカスタム設定」** で期間を選択
-### 定期実行（自動化）
+4. 右クリック→**「レポートの保存」**
+5. HTML形式またはCSV形式で保存
+6. 保存したファイルを`reports/`フォルダに配置
 
-#### 方法1: launchd（macOS推奨）
+### アプリの機能
+
+#### 📊 ダッシュボード
+- トレード統計の概要表示
+- 損益チャート
+- 通貨ペア別パフォーマンス
+
+#### 📈 トレード分析
+- 個別トレードの詳細表示
+- フィルタリングと検索機能
+- データのエクスポート
+
+#### 💼 資産管理
+- 資産推移のトラッキング
+- 入出金履歴の記録
+
+#### 📝 戦略管理
+- トレード戦略のテンプレート作成
+- 戦略ルールの定義と保存
+- 戦略別パフォーマンス分析
 ## ファイル構成
 
+```
 FX/
+├── app.py                    # Streamlitメインアプリケーション
 ├── src/
-│   ├── main.py              # メインスクリプト
+│   ├── main.py              # バックエンドメインスクリプト
+│   ├── data_manager.py      # データ管理・分析クラス
 │   ├── mt5_report_parser.py # MT5レポートパーサー
-│   ├── notion_client.py     # Notion API クライアント
+│   ├── mt5_connector.py     # MT5データ取得
+│   ├── notion_db.py         # Notion API クライアント
+│   ├── sheets_client.py     # Google Sheets クライアント
+│   ├── strategy_storage.py  # 戦略データ保存
+│   ├── strategy_page.py     # 戦略管理UI
 │   └── config.py            # 設定管理
 ├── reports/                 # MT5レポートファイル保存先
 ├── logs/                    # ログファイル
+├── strategies.json          # 戦略データ保存
 ├── .env                     # 環境変数（要作成）
+├── credentials.json         # Google認証情報（オプション）
 ├── requirements.txt         # 依存パッケージ
+├── setup_spreadsheet.py     # Google Sheets初期設定スクリプト
 └── README.md
+```
 
 ## トラブルシューティング
 
+### アプリが起動しない
+- Python仮想環境がアクティベートされているか確認
+- `pip install -r requirements.txt`で依存パッケージがインストールされているか確認
+- ポート8501が既に使用されていないか確認
+
 ### レポートファイルが見つからない
 1. `reports/` フォルダを作成: `mkdir reports`
-2. MT5からHTMLレポートをエクスポート
+2. MT5からHTMLまたはCSVレポートをエクスポート
 3. `reports/` フォルダに保存
 
 ### レポートが正しく解析されない
 - MT5で「Detailed Statement (HTML)」形式を選択してください
-- CSVフォーマットも対応していますが、HTMLの方が推奨です
+- CSV形式も対応していますが、HTML形式の方が推奨です
 
 ### Notionに書き込めない
-- インテグレーショントークンが正しいか確認
+- `.env`ファイルにNotionの設定が正しく記載されているか確認
+- インテグレーショントークンが有効か確認
 - データベースIDが正しいか確認
 - インテグレーションがデータベースへのアクセス権を持っているか確認
 
@@ -151,32 +204,23 @@ FX/
 
 ### macOSでの注意点
 - MetaTrader5 Pythonパッケージは使用しません（Windows専用のため）
-- レポートファイルベースの同期方式です
+- レポートファイルベースの分析方式です
 - MT5アプリは必要ですが、Python経由での直接接続は不要です
 
-## ファイル構成
-```
-FX/
-├── src/
-│   ├── main.py              # メインスクリプト
-│   ├── mt5_connector.py     # MT5接続・データ取得
-│   ├── notion_client.py     # Notion API クライアント
-│   └── config.py            # 設定管理
-├── logs/                    # ログファイル
-├── .env                     # 環境変数（要作成）
-├── .env.example            # 環境変数のサンプル
-├── requirements.txt         # 依存パッケージ
-└── README.md
-```
+## 依存パッケージ
 
-## トラブルシューティング
+主要なパッケージ：
+- **streamlit**: Webアプリケーションフレームワーク
+- **pandas**: データ分析
+- **plotly**: インタラクティブなグラフ作成
+- **notion-client**: Notion API連携
+- **gspread**: Google Sheets連携
+- その他の詳細は[requirements.txt](requirements.txt)を参照
 
-### MT5に接続できない
-- MT5アプリケーションが起動しているか確認
-- ログイン情報が正しいか確認
-- サーバー名が正しいか確認（XMTrading-MT5の後に数字がつく場合があります）
+## ライセンス
 
-### Notionに書き込めない
-- インテグレーショントークンが正しいか確認
-- データベースIDが正しいか確認
-- インテグレーションがデータベースへのアクセス権を持っているか確認
+このプロジェクトは個人使用を目的としています。
+
+## お問い合わせ
+
+問題が発生した場合は、GitHubのIssuesで報告してください。

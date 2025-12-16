@@ -3,6 +3,7 @@
 
 # Google Sheets credentials
 credentials.json
+strategies.json
 *.json
 !.vscode/*.json
 

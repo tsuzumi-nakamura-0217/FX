@@ -11,6 +11,7 @@ class Config:
     # Notion設定
     NOTION_API_KEY = os.getenv('NOTION_API_KEY', '')
     NOTION_DATABASE_ID = os.getenv('NOTION_DATABASE_ID', '')
+    NOTION_STRATEGY_DATABASE_ID = os.getenv('NOTION_STRATEGY_DATABASE_ID', '')
     
     # Google Sheets設定
     GOOGLE_SHEETS_ENABLED = os.getenv('GOOGLE_SHEETS_ENABLED', 'false').lower() == 'true'
