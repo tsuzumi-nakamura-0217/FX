@@ -938,13 +938,27 @@ def trade_log_page():
         selected_type = st.selectbox("タイプ", types)
     
     with col3:
-        # 手法の選択肢（データは既にクリーニング済み）
+        # 手法の選択肢（トレード履歴 + 保存済みテンプレートをマージ）
+        df_strategies = []
         if 'strategy' in df.columns:
-            valid_strategies = df['strategy'].dropna().unique()
-            valid_strategies = [str(s) for s in valid_strategies if s and str(s).strip()]
-            strategies = ['すべて'] + sorted(set(valid_strategies))
-        else:
-            strategies = ['すべて']
+            df_strategies = df['strategy'].dropna().unique().tolist()
+
+        if not st.session_state.get('strategy_storage'):
+            try:
+                st.session_state.strategy_storage = StrategyStorage()
+            except Exception:
+                st.session_state.strategy_storage = None
+
+        storage_strategies = []
+        try:
+            if st.session_state.get('strategy_storage'):
+                storage_strategies = list(st.session_state.strategy_storage.get_all_strategies().keys())
+        except Exception:
+            storage_strategies = []
+
+        combined = list(df_strategies) + list(storage_strategies)
+        cleaned = [str(s).strip() for s in combined if pd.notna(s) and str(s).strip() and str(s).strip().lower() not in ['nan', 'none', '']]
+        strategies = ['すべて'] + sorted(list(set(cleaned))) if cleaned else ['すべて']
         selected_strategy = st.selectbox("手法", strategies)
     
     col4, col5 = st.columns(2)
@@ -1070,17 +1084,99 @@ def trade_log_page():
                     pass
             return ''
         
-        # インタラクティブなテーブル
-        styled_cols = ['net_profit_loss_jpy']
-        if 'pips' in available_cols:
-            styled_cols.append('pips')
+        # インタラクティブなテーブル（編集可能）
+        st.write("💡 **ヒント:** strategyやreview_commentセルをダブルクリックすると、その場で編集できます")
         
-        st.dataframe(
-            display_df.style.applymap(color_profit_pips, subset=styled_cols),
+        # 手法の選択肢を取得（編集用）: トレード履歴 + 保存済みテンプレートをマージ
+        # StrategyStorage に保存された手法も含めることで、過去に未使用の手法も選べるようにする
+        df_strategies = []
+        if 'strategy' in df.columns:
+            df_strategies = df['strategy'].dropna().unique().tolist()
+
+        # ストレージから手法を取得（セッションに存在しなければ初期化）
+        if not st.session_state.get('strategy_storage'):
+            try:
+                st.session_state.strategy_storage = StrategyStorage()
+            except Exception:
+                st.session_state.strategy_storage = None
+
+        storage_strategies = []
+        try:
+            if st.session_state.get('strategy_storage'):
+                storage_dict = st.session_state.strategy_storage.get_all_strategies()
+                storage_strategies = list(storage_dict.keys())
+        except Exception:
+            storage_strategies = []
+
+        combined = list(df_strategies) + list(storage_strategies)
+        # クリーンアップ: NaN/None/empty/'none'を除外、重複削除、ソート
+        all_strategies = [str(s).strip() for s in combined if pd.notna(s) and str(s).strip() and str(s).strip().lower() not in ['nan', 'none', '']]
+        all_strategies = sorted(list(set(all_strategies)))
+        
+        # データエディターで編集可能にする
+        editable_columns = ['strategy', 'review_comment']
+        disabled_columns = [col for col in display_df.columns if col not in editable_columns]
+        
+        edited_df = st.data_editor(
+            display_df,
             use_container_width=True,
             hide_index=True,
-            height=600
+            height=600,
+            disabled=disabled_columns,
+            column_config={
+                'strategy': st.column_config.SelectboxColumn(
+                    'strategy',
+                    help='手法を選択できます',
+                    options=all_strategies,
+                    required=False
+                ),
+                'review_comment': st.column_config.TextColumn(
+                    'review_comment',
+                    help='ダブルクリックして編集できます',
+                    max_chars=500,
+                    width='large'
+                )
+            },
+            key='trade_table_editor'
         )
+        
+        # 変更があれば保存ボタンを表示
+        if not edited_df.equals(display_df):
+            st.warning("⚠️ 変更が保存されていません")
+            if st.button("💾 変更を保存", type="primary", key="save_review_changes"):
+                data_manager = get_data_manager()
+                if data_manager:
+                    with st.spinner('保存中...'):
+                        try:
+                            # 変更されたデータを取得
+                            changes_count = 0
+                            for idx in edited_df.index:
+                                # review_commentの変更をチェック
+                                if edited_df.loc[idx, 'review_comment'] != display_df.loc[idx, 'review_comment']:
+                                    trade_id = int(edited_df.loc[idx, 'trade_id'])
+                                    new_comment = edited_df.loc[idx, 'review_comment']
+                                    if data_manager.update_review_comment(trade_id, new_comment):
+                                        changes_count += 1
+                                
+                                # strategyの変更をチェック
+                                if edited_df.loc[idx, 'strategy'] != display_df.loc[idx, 'strategy']:
+                                    trade_id = int(edited_df.loc[idx, 'trade_id'])
+                                    new_strategy = edited_df.loc[idx, 'strategy']
+                                    if data_manager.update_strategy(trade_id, new_strategy):
+                                        changes_count += 1
+                            
+                            if changes_count > 0:
+                                st.success(f"✅ {changes_count}件の変更を保存しました！")
+                                st.cache_resource.clear()
+                                import time
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error("❌ 変更の保存に失敗しました")
+                        except Exception as e:
+                            st.error(f"❌ エラーが発生しました: {e}")
+                else:
+                    st.error("❌ データマネージャーの初期化に失敗しました")
         
         # CSV エクスポート
         csv = display_df.to_csv(index=False, encoding='utf-8-sig')
@@ -1294,10 +1390,27 @@ def review_page():
             col1, col2 = st.columns(2)
             
             with col1:
-                # 手法の選択肢（NaNや空文字列を除外）
-                valid_strategies = losing_trades['strategy'].dropna().unique()
-                valid_strategies = [str(s).strip() for s in valid_strategies if s and str(s).strip() and str(s).lower() != 'nan']
-                strategies = ['すべて'] + sorted(valid_strategies)
+                # 手法の選択肢: トレード履歴 + 保存済みテンプレートをマージ（NaN/None除外）
+                df_strategies = []
+                if 'strategy' in df.columns:
+                    df_strategies = df['strategy'].dropna().unique().tolist()
+
+                if not st.session_state.get('strategy_storage'):
+                    try:
+                        st.session_state.strategy_storage = StrategyStorage()
+                    except Exception:
+                        st.session_state.strategy_storage = None
+
+                storage_strategies = []
+                try:
+                    if st.session_state.get('strategy_storage'):
+                        storage_strategies = list(st.session_state.strategy_storage.get_all_strategies().keys())
+                except Exception:
+                    storage_strategies = []
+
+                combined = list(df_strategies) + list(storage_strategies)
+                valid_strategies = [str(s).strip() for s in combined if pd.notna(s) and str(s).strip() and str(s).strip().lower() not in ['nan', 'none', '']]
+                strategies = ['すべて'] + sorted(list(set(valid_strategies))) if valid_strategies else ['すべて']
                 selected_strategy = st.selectbox("手法でフィルター", strategies, key="losing_strategy")
             
             with col2:
@@ -1335,12 +1448,94 @@ def review_page():
             # ソート
             display_losses = display_losses.sort_values('net_profit_loss_jpy')
             
-            st.dataframe(
+            # 手法の選択肢を取得（編集用）: トレード履歴 + 保存済みテンプレートをマージ
+            df_strategies = []
+            if 'strategy' in df.columns:
+                df_strategies = df['strategy'].dropna().unique().tolist()
+
+            if not st.session_state.get('strategy_storage'):
+                try:
+                    st.session_state.strategy_storage = StrategyStorage()
+                except Exception:
+                    st.session_state.strategy_storage = None
+
+            storage_strategies = []
+            try:
+                if st.session_state.get('strategy_storage'):
+                    storage_dict = st.session_state.strategy_storage.get_all_strategies()
+                    storage_strategies = list(storage_dict.keys())
+            except Exception:
+                storage_strategies = []
+
+            combined = list(df_strategies) + list(storage_strategies)
+            all_strategies = [str(s).strip() for s in combined if pd.notna(s) and str(s).strip() and str(s).strip().lower() not in ['nan', 'none', '']]
+            all_strategies = sorted(list(set(all_strategies)))
+            
+            # 編集可能なデータエディター
+            st.write("💡 **ヒント:** strategyやreview_commentセルをダブルクリックすると、編集できます")
+            
+            editable_columns = ['strategy', 'review_comment']
+            disabled_columns = [col for col in display_losses.columns if col not in editable_columns]
+            
+            edited_losses = st.data_editor(
                 display_losses,
                 use_container_width=True,
                 hide_index=True,
-                height=500
+                height=500,
+                disabled=disabled_columns,
+                column_config={
+                    'strategy': st.column_config.SelectboxColumn(
+                        'strategy',
+                        help='手法を選択できます',
+                        options=all_strategies,
+                        required=False
+                    ),
+                    'review_comment': st.column_config.TextColumn(
+                        'review_comment',
+                        help='ダブルクリックして編集できます',
+                        max_chars=500,
+                        width='large'
+                    )
+                },
+                key='losing_trades_editor'
             )
+            
+            # 変更があれば保存ボタンを表示
+            if not edited_losses.equals(display_losses):
+                st.warning("⚠️ 変更が保存されていません")
+                if st.button("💾 変更を保存", type="primary", key="save_losing_review_changes"):
+                    data_manager = get_data_manager()
+                    if data_manager:
+                        with st.spinner('保存中...'):
+                            try:
+                                changes_count = 0
+                                for idx in edited_losses.index:
+                                    # review_commentの変更をチェック
+                                    if edited_losses.loc[idx, 'review_comment'] != display_losses.loc[idx, 'review_comment']:
+                                        trade_id = int(edited_losses.loc[idx, 'trade_id'])
+                                        new_comment = edited_losses.loc[idx, 'review_comment']
+                                        if data_manager.update_review_comment(trade_id, new_comment):
+                                            changes_count += 1
+                                    
+                                    # strategyの変更をチェック
+                                    if edited_losses.loc[idx, 'strategy'] != display_losses.loc[idx, 'strategy']:
+                                        trade_id = int(edited_losses.loc[idx, 'trade_id'])
+                                        new_strategy = edited_losses.loc[idx, 'strategy']
+                                        if data_manager.update_strategy(trade_id, new_strategy):
+                                            changes_count += 1
+                                
+                                if changes_count > 0:
+                                    st.success(f"✅ {changes_count}件の変更を保存しました！")
+                                    st.cache_resource.clear()
+                                    import time
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    st.error("❌ 変更の保存に失敗しました")
+                            except Exception as e:
+                                st.error(f"❌ エラーが発生しました: {e}")
+                    else:
+                        st.error("❌ データマネージャーの初期化に失敗しました")
             
             # 共通点の分析
             st.divider()
@@ -1401,12 +1596,29 @@ def strategy_management_page():
             strategies = []
             if not strategy_stats.empty:
                 strategies = sorted(strategy_stats.index.tolist())
-            
-            # フォールバック: analyzerで取得できない場合、直接DFから取得を試みる
-            if not strategies and 'strategy' in df.columns:
-                raw_strategies = df['strategy'].dropna().unique()
-                strategies = [str(s).strip() for s in raw_strategies if str(s).strip() and str(s).lower() != 'nan']
-                strategies = sorted(list(set(strategies)))
+
+            # フォールバック/補完: analyzerで取得した手法にストレージの手法をマージ
+            df_strategies = []
+            if 'strategy' in df.columns:
+                df_strategies = df['strategy'].dropna().unique().tolist()
+
+            if not st.session_state.get('strategy_storage'):
+                try:
+                    st.session_state.strategy_storage = StrategyStorage()
+                except Exception:
+                    st.session_state.strategy_storage = None
+
+            storage_strategies = []
+            try:
+                if st.session_state.get('strategy_storage'):
+                    storage_strategies = list(st.session_state.strategy_storage.get_all_strategies().keys())
+            except Exception:
+                storage_strategies = []
+
+            # combine: strategy_stats (優先) + df + storage
+            combined = list(strategies) + list(df_strategies) + list(storage_strategies)
+            strategies = [str(s).strip() for s in combined if pd.notna(s) and str(s).strip() and str(s).strip().lower() not in ['nan', 'none', '']]
+            strategies = sorted(list(dict.fromkeys(strategies)))
             
             if strategies:
                 st.write(f"**登録済み手法数:** {len(strategies)}件")
@@ -1474,19 +1686,70 @@ def strategy_management_page():
                             st.markdown("**現在のルール:**")
                             st.info(current_rule)
                         
-                        # 最近のトレード
+                        # この手法のトレード一覧
                         st.divider()
-                        st.write("**最近のトレード（直近10件）**")
+                        st.write(f"**この手法のトレード一覧（全{len(strategy_trades)}件）**")
                         
-                        recent_strategy_trades = strategy_trades.sort_values('date', ascending=False).head(10)
+                        all_strategy_trades = strategy_trades.sort_values('date', ascending=False)
                         display_cols = ['trade_id', 'date', 'currency_pair', 'type', 'pips', 'net_profit_loss_jpy', 'review_comment']
-                        available_cols = [col for col in display_cols if col in recent_strategy_trades.columns]
+                        available_cols = [col for col in display_cols if col in all_strategy_trades.columns]
                         
-                        display_df = recent_strategy_trades[available_cols].copy()
+                        display_df = all_strategy_trades[available_cols].copy()
                         if 'date' in display_df.columns:
                             display_df['date'] = pd.to_datetime(display_df['date']).dt.strftime('%Y-%m-%d')
                         
-                        st.dataframe(display_df, use_container_width=True, hide_index=True)
+                        # 編集可能なデータエディター
+                        st.write("💡 **ヒント:** review_commentセルをダブルクリックすると、編集できます")
+                        
+                        editable_columns = ['review_comment']
+                        disabled_columns = [col for col in display_df.columns if col not in editable_columns]
+                        
+                        edited_strategy_df = st.data_editor(
+                            display_df,
+                            use_container_width=True,
+                            hide_index=True,
+                            height=600,
+                            disabled=disabled_columns,
+                            column_config={
+                                'review_comment': st.column_config.TextColumn(
+                                    'review_comment',
+                                    help='ダブルクリックして編集できます',
+                                    max_chars=500,
+                                    width='large'
+                                )
+                            },
+                            key='strategy_trades_editor'
+                        )
+                        
+                        # 変更があれば保存ボタンを表示
+                        if not edited_strategy_df.equals(display_df):
+                            st.warning("⚠️ 変更が保存されていません")
+                            if st.button("💾 変更を保存", type="primary", key="save_strategy_review_changes"):
+                                data_manager = get_data_manager()
+                                if data_manager:
+                                    with st.spinner('保存中...'):
+                                        try:
+                                            changes_count = 0
+                                            for idx in edited_strategy_df.index:
+                                                # review_commentの変更をチェック
+                                                if edited_strategy_df.loc[idx, 'review_comment'] != display_df.loc[idx, 'review_comment']:
+                                                    trade_id = int(edited_strategy_df.loc[idx, 'trade_id'])
+                                                    new_comment = edited_strategy_df.loc[idx, 'review_comment']
+                                                    if data_manager.update_review_comment(trade_id, new_comment):
+                                                        changes_count += 1
+                                            
+                                            if changes_count > 0:
+                                                st.success(f"✅ {changes_count}件の変更を保存しました！")
+                                                st.cache_resource.clear()
+                                                import time
+                                                time.sleep(1)
+                                                st.rerun()
+                                            else:
+                                                st.error("❌ 変更の保存に失敗しました")
+                                        except Exception as e:
+                                            st.error(f"❌ エラーが発生しました: {e}")
+                                else:
+                                    st.error("❌ データマネージャーの初期化に失敗しました")
                 else:
                     st.warning("手法データがありません")
             else:
@@ -1774,8 +2037,8 @@ def main():
             st.markdown(
                 """
                 <div class="header-brand">
-                    <span class="brand-logo">📊</span>
-                    <h1 class="brand-title">FX Trade Analytics</h1>
+                    <span class="brand-logo">📈</span>
+                    <h1 class="brand-title">FX</h1>
                 </div>
                 """,
                 unsafe_allow_html=True,

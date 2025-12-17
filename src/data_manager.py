@@ -280,6 +280,63 @@ class TradeDataManager:
             col_idx = len(headers) + 1
             self.sheet.update_cell(1, col_idx, '振り返りコメント')
     
+    def update_strategy(self, trade_id: int, strategy: str) -> bool:
+        """
+        指定した取引番号の手法を更新
+        
+        Args:
+            trade_id: 取引番号
+            strategy: 新しい手法名
+            
+        Returns:
+            bool: 更新成功の場合True
+        """
+        try:
+            headers = self.sheet.row_values(1)
+            
+            # 取引番号列のインデックス
+            if '取引番号' not in headers:
+                print("取引番号列が見つかりません")
+                return False
+            trade_id_col_idx = headers.index('取引番号')
+            
+            # 手法列のインデックス
+            if '手法' not in headers:
+                print("手法列が見つかりません")
+                return False
+            strategy_col_idx = headers.index('手法') + 1  # gspreadは1ベース
+            
+            # 該当する行を検索
+            all_data = self.sheet.get_all_values()
+            target_row = None
+            
+            for row_idx, row_data in enumerate(all_data[1:], start=2):  # ヘッダーをスキップ
+                if row_idx <= len(all_data):
+                    try:
+                        # 取引番号を比較
+                        if trade_id_col_idx < len(row_data):
+                            cell_value = str(row_data[trade_id_col_idx]).strip()
+                            if cell_value == str(trade_id):
+                                target_row = row_idx
+                                break
+                    except (ValueError, IndexError):
+                        continue
+            
+            if target_row is None:
+                print(f"取引番号 {trade_id} が見つかりません")
+                return False
+            
+            # 手法を更新
+            self.sheet.update_cell(target_row, strategy_col_idx, strategy)
+            print(f"取引番号 {trade_id} の手法を '{strategy}' に更新しました（行: {target_row}, 列: {strategy_col_idx}）")
+            return True
+            
+        except Exception as e:
+            print(f"手法更新エラー: {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
     def update_strategy_dropdown(self, strategies: List[str]):
         """
         手法列にデータ検証（プルダウン）を設定

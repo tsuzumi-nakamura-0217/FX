@@ -14,21 +14,24 @@ def strategy_management_page_new(load_data_func, get_strategy_manager_func):
     strategy_manager = get_strategy_manager_func()
     
     # 手法をロード
-    with st.spinner('手法を読み込んでいます...'):
-        strategies_data = strategy_manager.load_all_strategies()
-        strategies = strategy_manager.get_strategy_list()
-        
-        # Google Sheetsのプルダウンを更新
-        if strategies and strategy_manager.sheets_manager:
-            try:
-                if hasattr(strategy_manager.sheets_manager, 'update_strategy_dropdown'):
-                    strategy_manager.sheets_manager.update_strategy_dropdown(strategies)
-                else:
-                    st.warning("Google Sheetsのプルダウン更新機能が利用できません。アプリを再起動してください。")
-            except Exception as e:
-                st.warning(f"Google Sheetsのプルダウン更新に失敗しました: {e}")
-    
-    # タブで機能を分割
+    strategies_data = {}
+    strategies = []
+    try:
+        with st.spinner('手法を読み込んでいます...'):
+            strategies_data = strategy_manager.load_all_strategies() or {}
+            strategies = strategy_manager.get_strategy_list() or []
+
+            # Google Sheetsのプルダウンを更新（可能な場合のみ）
+            if strategies and getattr(strategy_manager, 'sheets_manager', None):
+                try:
+                    if hasattr(strategy_manager.sheets_manager, 'update_strategy_dropdown'):
+                        strategy_manager.sheets_manager.update_strategy_dropdown(strategies)
+                    else:
+                        st.warning("Google Sheetsのプルダウン更新機能が利用できません。アプリを再起動してください。")
+                except Exception as e:
+                    st.warning(f"Google Sheetsのプルダウン更新に失敗しました: {e}")
+    except Exception as e:
+        st.error(f"手法の読み込み中にエラーが発生しました: {e}")
     tab1, tab2, tab3 = st.tabs([
         "📋 手法一覧", "➕ 手法を追加", "📊 パフォーマンス分析"
     ])
@@ -144,17 +147,67 @@ def _render_strategy_detail(selected_strategy, strategy_manager, load_data_func)
         strategy_trades = df[df['strategy'] == selected_strategy]
         if not strategy_trades.empty:
             st.divider()
-            st.write("**最近のトレード（直近10件）**")
+            st.write(f"**この手法のトレード一覧（全{len(strategy_trades)}件）**")
             
-            recent_strategy_trades = strategy_trades.sort_values('date', ascending=False).head(10)
+            recent_strategy_trades = strategy_trades.sort_values('date', ascending=False)
             display_cols = ['trade_id', 'date', 'currency_pair', 'type', 'pips', 'net_profit_loss_jpy', 'review_comment']
             available_cols = [col for col in display_cols if col in recent_strategy_trades.columns]
             
             display_df = recent_strategy_trades[available_cols].copy()
             if 'date' in display_df.columns:
                 display_df['date'] = pd.to_datetime(display_df['date']).dt.strftime('%Y-%m-%d')
-            
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+            # 編集可能なデータエディター（review_commentのみ編集可能）
+            st.write("💡 **ヒント:** review_commentセルをダブルクリックすると編集できます")
+            edited_df = st.data_editor(
+                display_df,
+                use_container_width=True,
+                hide_index=True,
+                height=600,
+                disabled=[col for col in display_df.columns if col != 'review_comment'],
+                column_config={
+                    'review_comment': st.column_config.TextColumn(
+                        'review_comment',
+                        help='ダブルクリックして編集できます',
+                        max_chars=500,
+                        width='large'
+                    )
+                },
+                key=f'strategy_trades_editor_{selected_strategy}'
+            )
+
+            # 変更があれば保存
+            if not edited_df.equals(display_df):
+                st.warning("⚠️ 変更が保存されていません")
+                if st.button("💾 変更を保存", key=f'save_strategy_comments_{selected_strategy}'):
+                    sheets_mgr = getattr(strategy_manager, 'sheets_manager', None)
+                    if sheets_mgr is None:
+                        st.error("❌ データマネージャーが見つかりません")
+                    else:
+                        with st.spinner('保存中...'):
+                            try:
+                                changes_count = 0
+                                for idx in edited_df.index:
+                                    old = display_df.loc[idx, 'review_comment'] if 'review_comment' in display_df.columns else ''
+                                    new = edited_df.loc[idx, 'review_comment']
+                                    if pd.isna(old):
+                                        old = ''
+                                    if pd.isna(new):
+                                        new = ''
+                                    if new != old:
+                                        trade_id = int(edited_df.loc[idx, 'trade_id']) if 'trade_id' in edited_df.columns else None
+                                        if trade_id is not None:
+                                            if sheets_mgr.update_review_comment(trade_id, new):
+                                                changes_count += 1
+                                if changes_count > 0:
+                                    st.success(f"✅ {changes_count}件のコメントを保存しました！")
+                                    import time
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    st.info("変更は見つかりませんでした")
+                            except Exception as e:
+                                st.error(f"❌ 保存中にエラーが発生しました: {e}")
 
 
 def _render_add_strategy_tab(strategy_manager, strategies):
