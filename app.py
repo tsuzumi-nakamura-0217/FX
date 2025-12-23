@@ -9,6 +9,7 @@ from src.data_manager import TradeDataManager, TradeAnalyzer, StrategyManager
 from src.config import Config
 from src.strategy_storage import StrategyStorage
 from src.strategy_page import strategy_management_page_new
+import position_calculator as pc
 
 # ページ設定（最初に一度だけ呼ばれる）
 st.set_page_config(
@@ -363,6 +364,7 @@ st.markdown("""
         border-radius: 10px;
         border: 2px solid #e5e7eb;
         font-size: 0.875rem;
+        color: #111827;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         background: white;
         padding: 0.75rem 1rem;
@@ -845,60 +847,129 @@ def analysis_page():
                 color_continuous_scale=['red', 'yellow', 'green']
             )
             st.plotly_chart(fig, use_container_width=True)
-        
-        # 市場セッション別分析
-        st.write("**市場セッション別パフォーマンス**")
-        session_analysis = analyzer.analyze_by_market_session()
-        
-        if not session_analysis.empty:
-            st.dataframe(session_analysis, use_container_width=True)
-            
-            fig = px.bar(
-                session_analysis.reset_index(),
-                x='market_session',
-                y='合計損益',
-                title='市場セッション別合計損益',
-                color='勝率',
-                color_continuous_scale='RdYlGn'
-            )
-            st.plotly_chart(fig, use_container_width=True)
-    
-    with tab4:
-        st.subheader("⏱️ 保有時間別分析")
-        holding_analysis = analyzer.analyze_by_holding_time()
-        
-        if not holding_analysis.empty:
-            st.dataframe(holding_analysis, use_container_width=True)
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                fig = px.bar(
-                    holding_analysis.reset_index(),
-                    x='holding_category',
-                    y='合計損益',
-                    title='保有時間別合計損益',
-                    color='合計損益',
-                    color_continuous_scale=['red', 'yellow', 'green']
-                )
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
-            
-            with col2:
-                fig = px.bar(
-                    holding_analysis.reset_index(),
-                    x='holding_category',
-                    y='勝率',
-                    title='保有時間別勝率',
-                    color='勝率',
-                    color_continuous_scale='Blues'
-                )
-                fig.update_layout(height=400, yaxis_range=[0, 100])
-                st.plotly_chart(fig, use_container_width=True)
-            
-            st.info("💡 最適な保有時間を見つけて、トレード戦略を最適化しましょう！")
+
+
+def position_calculator_page():
+    """ポジション計算機ページ"""
+    st.title("🧮 ポジション計算機")
+
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        balance = st.number_input("口座残高（口座通貨）", value=100000.0, step=1000.0)
+        risk_pct = st.number_input("リスク割合 (%)", value=1.0, step=0.1)
+        # 説明付きラベルを表示するため、内部値を保持しつつ表示を加工する（format_func を使用）
+        method_map = {
+            "pips（pips単位で入力）": "pips",
+            "price（価格差で入力）": "price",
+        }
+        method_value_to_display = {v: k for k, v in method_map.items()}
+        # 表示ラベルをそのままoptionsに渡し、内部値はmapで取得する
+        method_display = st.selectbox(
+            "損切り幅の入力形式",
+            options=list(method_map.keys()),
+            index=0,
+        )
+        method = method_map[method_display]
+
+        # 通貨ペアと口座通貨も表示ラベルをリッチにして内部は通貨コードを保持
+        pair_map = {
+            "EURUSD — EUR / USD (pip=0.0001)": "EURUSD",
+            "USDJPY — USD / JPY (pip=0.01)": "USDJPY",
+            "GBPUSD — GBP / USD (pip=0.0001)": "GBPUSD",
+            "USDCHF — USD / CHF (pip=0.0001)": "USDCHF",
+            "AUDUSD — AUD / USD (pip=0.0001)": "AUDUSD",
+            "NZDUSD — NZD / USD (pip=0.0001)": "NZDUSD",
+            "EURJPY — EUR / JPY (pip=0.01)": "EURJPY",
+            "GBPJPY — GBP / JPY (pip=0.01)": "GBPJPY",
+        }
+        pair_value_to_display = {v: k for k, v in pair_map.items()}
+        pair_display = st.selectbox(
+            "通貨ペア",
+            options=list(pair_map.keys()),
+            index=0,
+        )
+        currency_pair = pair_map[pair_display]
+
+        account_map = {
+            "USD — 米ドル": "USD",
+            "JPY — 日本円": "JPY",
+            "EUR — ユーロ": "EUR",
+        }
+        account_value_to_display = {v: k for k, v in account_map.items()}
+        account_display = st.selectbox(
+            "口座通貨",
+            options=list(account_map.keys()),
+            index=0,
+        )
+        account_currency = account_map[account_display]
+
+        # lot 単位は選べるように残す
+        lot_unit = st.number_input("1ロットの基準単位", value=100000.0, step=1000.0)
+
+        # pipサイズの決定（JPYペアは0.01、それ以外は0.0001を想定）
+        pip_size = 0.01 if "JPY" in currency_pair else 0.0001
+
+        # 見積通貨（quote）は通貨ペアの後半（例: EURUSD -> USD）
+        quote_currency = currency_pair[-3:]
+
+        # 見積通貨と口座通貨が異なる場合は換算レートを入力
+        if quote_currency == account_currency:
+            conversion_rate = 1.0
         else:
-            st.warning("保有時間データがありません")
+            # USD が絡む場合は USD/JPY のレートだけ入力すれば良いケースが多い
+            # 例: quote=USD, account=JPY -> USD→JPY レートを使う
+            # 例: quote=JPY, account=USD -> USD→JPY レートの逆数を使う
+            if quote_currency == 'USD' and account_currency == 'JPY':
+                usd_jpy = st.number_input("USD → JPY の換算レート (例: 150)", value=150.0, step=0.01)
+                conversion_rate = usd_jpy
+            elif quote_currency == 'JPY' and account_currency == 'USD':
+                usd_jpy = st.number_input("USD → JPY の換算レート (例: 150)", value=150.0, step=0.01)
+                conversion_rate = 1.0 / usd_jpy if usd_jpy != 0 else 1.0
+            else:
+                # それ以外は直接の換算レートを入力
+                conversion_rate = st.number_input(
+                    f"{quote_currency} → {account_currency} の換算レート (例: USD→EUR=0.95)",
+                    value=1.0,
+                    step=0.0001,
+                )
+
+        # 1pipあたりの価値（1ロットあたり）を自動計算
+        pip_value = pip_size * lot_unit * conversion_rate
+
+        if method == 'pips':
+            pip_diff = st.number_input("損切り幅 (pips)", value=20.0, step=0.1)
+        else:
+            pip_diff = st.number_input("損切り幅 (価格差)", value=0.0020, format="%.6f")
+
+        entry = st.number_input("エントリー価格（任意）", value=0.0, format="%.6f")
+        stop = st.number_input("損切り価格（任意）", value=0.0, format="%.6f")
+        rr = st.number_input("利確のRR比（空白=0でスキップ）", value=2.0, step=0.1)
+
+    with col2:
+        st.markdown("### 計算結果")
+        try:
+            res = pc.calc_by_pips(balance, risk_pct, pip_diff, pip_value, lot_unit)
+            st.write(f"リスク金額: ¥{res['risk_amount']:.2f}")
+            st.write(f"ポジション(ロット): {res['lots']:.6f}")
+            st.write(f"ポジション(単位): {res['units']:.1f}")
+            expected_loss = res['pip_diff'] * pip_value * res['lots']
+            st.write(f"想定損失額(計算チェック): ¥{expected_loss:.2f}")
+
+            st.info(f"自動計算した1pip価 (1ロットあたり): {pip_value:.4f} {account_currency}")
+
+            if rr and entry and stop and entry != 0 and stop != 0:
+                tp, sl_dist, tp_dist, direction = pc.calc_take_profit_price(entry, stop, rr)
+                st.write(f"ポジション方向: {direction}")
+                st.write(f"損切り幅(価格差): {sl_dist:.6f}")
+                st.write(f"目標利確幅(価格差): {tp_dist:.6f}")
+                st.write(f"利確価格: {tp:.6f}")
+                # 目標での想定利益額（単純計算）
+                profit_amount = tp_dist * pip_value * res['lots']
+                st.write(f"目標到達時の想定利益額: ¥{profit_amount:.2f}")
+        except Exception as e:
+            st.error(f"計算エラー: {e}")
+        
 
 
 def trade_log_page():
@@ -923,13 +994,18 @@ def trade_log_page():
             valid_pairs = df['currency_pair'].dropna().unique()
             valid_pairs = [str(p) for p in valid_pairs if p and str(p).strip()]
             currency_pairs = ['すべて'] + sorted(set(valid_pairs))
-        else:
-            currency_pairs = ['すべて']
-        selected_pair = st.selectbox("通貨ペア", currency_pairs)
-    
-    with col2:
-        # タイプの選択肢（データは既にクリーニング済み）
-        if 'type' in df.columns:
+            # 説明付きラベルを表示するため、表示文字列 -> 内部値 のマッピングを使う
+            method_map = {
+                "pips（pips単位で入力）": "pips",
+                "price（価格差で入力）": "price",
+            }
+            method_value_to_display = {v: k for k, v in method_map.items()}
+            method = st.selectbox(
+                "損切り幅の入力形式",
+                options=list(method_value_to_display.keys()),
+                index=0,
+                format_func=lambda v: method_value_to_display[v],
+            )
             valid_types = df['type'].dropna().unique()
             valid_types = [str(t) for t in valid_types if t and str(t).strip()]
             types = ['すべて'] + sorted(set(valid_types))
@@ -2024,7 +2100,7 @@ def main():
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 0
 
-    pages = ["📊 ダッシュボード", "🔍 詳細分析", "📋 トレードログ", "📚 手法管理", "🔄 振り返り"]
+    pages = ["📊 ダッシュボード", "🔍 詳細分析", "📋 トレードログ", "📚 手法管理", "🧮 ポジション計算機", "🔄 振り返り"]
 
     # ヘッダー（containerをCSSで固定し、その中にナビを配置）
     header = st.container()
@@ -2136,6 +2212,8 @@ def main():
         trade_log_page()
     elif page_name == "手法管理":
         strategy_management_page_new(load_data, get_strategy_manager)
+    elif page_name == "ポジション計算機":
+        position_calculator_page()
     elif page_name == "振り返り":
         review_page()
     
